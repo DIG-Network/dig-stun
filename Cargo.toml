@@ -1,0 +1,15 @@
+[package]
+name = "dig-stun"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+description = "RFC 5389 STUN codec, client, address-scope table, peer observation and agreement — how a DIG node learns and believes its public address."
+repository = "https://github.com/DIG-Network/dig-stun"
+readme = "README.md"
+keywords = ["stun", "nat", "reflexive", "rfc5389", "p2p"]
+categories = ["network-programming"]
+
+[dependencies]
+
+[lints.rust]
+missing_docs = "deny"
