@@ -867,8 +867,11 @@ requester that has not yet proven anything, which is the one thing the credentia
 bare request is 20 bytes and its source is unproven; answering it with an 88-byte challenge would raise
 the server's worst-case reflection ratio from 2.2 to 4.4 toward a spoofed victim, so a bare refusal
 carries no `NONCE` and stays at 44 bytes — exactly today's success-response ratio. A nonce is issued only
-to a request that already carries a 92-byte identity, so a challenge is never larger than what triggered
-it, and the server is not an amplifier on any path. Golden vectors for all four shapes are §11 item 10.
+to a request that already carries a 92-byte identity, so a challenge, stale, or malformed reply — each
+sent only to an already-credentialed request — is never larger than what triggered it. The bare refusal
+is the one shape with no such request to size against; it is bounded to today's baseline STUN success
+ratio (2.2) rather than exceeding it, so it adds no amplification headroom this credential did not
+already inherit from ordinary STUN. Golden vectors for all four shapes are §11 item 10.
 
 ### 14.4 The nonce — stateless, source-bound, time-bucketed
 

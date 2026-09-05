@@ -4,7 +4,7 @@
 
 use crate::codec::TransactionId;
 use crate::credential::request::RequestKind;
-use crate::credential::wire::CredentialError;
+use crate::credential::wire::{is_valid_spki_der, CredentialError};
 
 /// Domain-separates a `dig:stun:v1` signature from every other message the same TLS-leaf key
 /// signs — a TLS `CertificateVerify`, a `dig:holdings:v1` record, or a future purpose — so a
@@ -72,10 +72,18 @@ impl VerifiedIdentity {
 /// other variant returns [`CredentialError::Malformed`] rather than panicking — this function sits
 /// on a path parsing untrusted datagrams, and failing closed costs nothing here.
 ///
+/// `RequestKind`'s fields are public, so a `Signed` variant reaching this function is not
+/// guaranteed to carry the 91-byte SPKI shape [`crate::credential::classify_request`] would have
+/// enforced — only a value built from the wire via that parser gets that guarantee for free. This
+/// function re-validates the shape itself ([`is_valid_spki_der`]) before it slices `spki`, so a
+/// directly-constructed `Signed` carrying a too-short or otherwise malformed SPKI returns
+/// [`CredentialError::Malformed`] rather than panicking on an out-of-bounds index.
+///
 /// # Errors
 ///
 /// [`CredentialError::BadSignature`] when the signature does not verify (wrong key, wrong
-/// preimage, or corrupt DER); [`CredentialError::Malformed`] when `kind` is not `Signed`.
+/// preimage, or corrupt DER); [`CredentialError::Malformed`] when `kind` is not `Signed`, or when
+/// its `spki` does not have the shape [`is_valid_spki_der`] requires.
 pub fn verify_signed_request(
     txid: &TransactionId,
     kind: &RequestKind<'_>,
@@ -89,9 +97,18 @@ pub fn verify_signed_request(
         return Err(CredentialError::Malformed);
     };
 
+    // A directly-built `Signed` (its fields are public) is not guaranteed to carry a well-formed
+    // SPKI the way one parsed via `classify_request` is. The slice below, and the `copy_from_slice`
+    // near the end of this function, both require exactly 91 bytes and panic on anything shorter —
+    // reject rather than slice blind: a public function must not panic on any input its own type
+    // permits.
+    if !is_valid_spki_der(spki) {
+        return Err(CredentialError::Malformed);
+    }
+
     let message = signing_message(txid, nonce, spki);
-    // The 65-byte uncompressed SEC1 point lives at spki[26..91]: byte 26 is the 0x04 marker this
-    // crate already validated in `classify_request`, and 27..91 is X ‖ Y (`SPEC.md` §14.6).
+    // The 65-byte uncompressed SEC1 point lives at spki[26..91]: byte 26 is the 0x04 marker
+    // `is_valid_spki_der` just confirmed, and 27..91 is X ‖ Y (`SPEC.md` §14.6).
     let point = &spki[26..crate::credential::wire::P256_SPKI_LEN];
     let public_key =
         ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P256_SHA256_ASN1, point);

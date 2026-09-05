@@ -230,6 +230,38 @@ fn verify_signed_request_rejects_wrong_kind_variants_without_panicking() {
     );
 }
 
+/// `RequestKind`'s fields are public, so nothing stops a caller from building a `Signed` variant
+/// directly, bypassing the length/shape check `classify_request` performs on the wire. Before the
+/// fix, `spki[26..91]` on a too-short slice panicked — `range start index 26 out of range for
+/// slice of length 5` was the auditor's own probe — rather than returning an `Err`.
+#[test]
+fn verify_signed_request_rejects_a_malformed_spki_without_panicking() {
+    let too_short_spki = [0u8; 5];
+    let kind = RequestKind::Signed {
+        spki: &too_short_spki,
+        nonce: b"nonce",
+        signature: b"sig",
+    };
+    assert_eq!(
+        verify_signed_request(&TXID, &kind),
+        Err(CredentialError::Malformed)
+    );
+
+    // A right-LENGTH but wrong-CONTENT spki must be rejected too — this proves the fix
+    // re-validates the full shape (`is_valid_spki_der`), not merely a `len() == 91` bounds check
+    // that a garbage 91-byte buffer would slip straight past.
+    let wrong_shape_spki = [0u8; P256_SPKI_LEN];
+    let kind = RequestKind::Signed {
+        spki: &wrong_shape_spki,
+        nonce: b"nonce",
+        signature: b"sig",
+    };
+    assert_eq!(
+        verify_signed_request(&TXID, &kind),
+        Err(CredentialError::Malformed)
+    );
+}
+
 #[test]
 fn encode_signed_request_round_trips_through_classify_and_verify() {
     let (signer, spki) = ring_test_signer();
@@ -319,10 +351,14 @@ fn classify_request_rejects_a_duplicated_identity_attribute() {
     assert_eq!(classify_request(&msg), Err(CredentialError::Malformed));
 }
 
-/// A challenge is never larger than the request that triggered it (`SPEC.md` §14.3.3): the size
-/// pairs a real server actually produces, taken directly from the shapes table.
+/// Every error shape sent in reply to an already-credentialed request — challenge, stale,
+/// malformed — is never larger than what triggered it (`SPEC.md` §14.3.3). The bare refusal is the
+/// one exception: it answers an uncredentialed bare request, so there is no larger trigger to size
+/// against; instead it is bounded to today's baseline STUN success ratio (2.2) rather than
+/// exceeding it. The sizes below pair what a real server actually produces, taken directly from
+/// the shapes table.
 #[test]
-fn challenge_is_never_larger_than_the_request_that_triggered_it() {
+fn error_shapes_never_exceed_their_trigger_except_bare_refusal_at_stun_baseline() {
     // Every size below comes from actually CALLING the real encoders (never a hand-typed
     // constant), so this test verifies the shipped byte layout rather than its own arithmetic.
     let spki = independent_spki_der();
