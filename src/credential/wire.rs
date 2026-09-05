@@ -32,7 +32,7 @@ pub const CREDENTIAL_VERSION: u8 = 0x01;
 pub const P256_SPKI_LEN: usize = 91;
 /// The constant first 26 bytes of every such SPKI: the ASN.1 `AlgorithmIdentifier` for
 /// id-ecPublicKey / prime256v1 (`SPEC.md` §14.3.1). Byte 26 (the 27th byte, checked separately by
-/// [`is_valid_spki_der`]) is always `0x04`, the uncompressed SEC1 point marker.
+/// this crate's internal shape validator) is always `0x04`, the uncompressed SEC1 point marker.
 pub const P256_SPKI_PREFIX: [u8; 26] = [
     0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a,
     0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00,

@@ -1116,3 +1116,207 @@ async fn bad_challenge_when_the_signers_own_spki_is_invalid_nothing_is_sent() {
     assert_eq!(result, Err(SignedQueryError::BadChallenge));
     server_task.await.unwrap();
 }
+
+#[tokio::test]
+async fn a_stray_reply_from_a_different_source_is_ignored() {
+    let (client, _client_addr) = bind_loopback().await;
+    let (server, server_addr) = bind_loopback().await;
+    let (attacker, _attacker_addr) = bind_loopback().await;
+    let (signer, _spki) = ring_test_signer();
+    let reflexive = a_globally_routable_reflexive_addr();
+
+    let server_task = tokio::spawn(async move {
+        let issuer = NonceIssuer::new_random();
+        let mut buf = [0u8; 512];
+        let (n, client_addr) = server.recv_from(&mut buf).await.unwrap();
+        let (txid, _) = classify_request(&buf[..n]).unwrap();
+
+        // A decoy success from an unrelated socket, carrying the SAME transaction id -- must be
+        // discarded solely because it is not from `server_addr` (SPEC.md §4's source check).
+        let decoy = dig_stun::encode_binding_success(&txid, reflexive);
+        attacker.send_to(&decoy, client_addr).await.unwrap();
+
+        let nonce = issuer.issue(client_addr, now_unix());
+        server
+            .send_to(
+                &encode_challenge(&txid, ERR_UNAUTHENTICATED, Some(&nonce)),
+                client_addr,
+            )
+            .await
+            .unwrap();
+
+        let (n, client_addr) = server.recv_from(&mut buf).await.unwrap();
+        let (txid, kind) = classify_request(&buf[..n]).unwrap();
+        verify_signed_request(&txid, &kind).expect("the genuine signed request must verify");
+        server
+            .send_to(
+                &dig_stun::encode_binding_success(&txid, reflexive),
+                client_addr,
+            )
+            .await
+            .unwrap();
+    });
+
+    let got = query_reflexive_address_signed(&client, server_addr, Duration::from_secs(2), &signer)
+        .await
+        .expect("a stray decoy from another socket must not short-circuit the exchange");
+    assert_eq!(got, reflexive);
+    server_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn a_never_dialable_success_address_is_rejected() {
+    let (client, _client_addr) = bind_loopback().await;
+    let (server, server_addr) = bind_loopback().await;
+    let (signer, _spki) = ring_test_signer();
+    let bogus: SocketAddr = "127.0.0.1:1234".parse().unwrap(); // loopback: NeverDialable
+
+    let server_task = tokio::spawn(async move {
+        let mut buf = [0u8; 512];
+        let (n, from) = server.recv_from(&mut buf).await.unwrap();
+        let (txid, _) = classify_request(&buf[..n]).unwrap();
+        // An "old" server answering the identity request as if bare, with a bogus address a
+        // malicious or misconfigured server fully controls (SPEC.md §4 step 4's scope guard).
+        server
+            .send_to(&dig_stun::encode_binding_success(&txid, bogus), from)
+            .await
+            .unwrap();
+    });
+
+    let result =
+        query_reflexive_address_signed(&client, server_addr, Duration::from_secs(2), &signer).await;
+    assert_eq!(
+        result,
+        Err(SignedQueryError::Stun(StunError::NoMappedAddress))
+    );
+    server_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn a_success_with_a_mismatched_transaction_id_is_ignored() {
+    let (client, _client_addr) = bind_loopback().await;
+    let (server, server_addr) = bind_loopback().await;
+    let (signer, _spki) = ring_test_signer();
+    let reflexive = a_globally_routable_reflexive_addr();
+
+    let server_task = tokio::spawn(async move {
+        let mut buf = [0u8; 512];
+        let (n, from) = server.recv_from(&mut buf).await.unwrap();
+        let (txid, _) = classify_request(&buf[..n]).unwrap();
+        let wrong_txid = {
+            let mut t = txid;
+            t[0] ^= 0xff;
+            t
+        };
+        // A stale/decoy success with the WRONG transaction id -- ignored, then the genuine one.
+        server
+            .send_to(
+                &dig_stun::encode_binding_success(&wrong_txid, reflexive),
+                from,
+            )
+            .await
+            .unwrap();
+        server
+            .send_to(&dig_stun::encode_binding_success(&txid, reflexive), from)
+            .await
+            .unwrap();
+    });
+
+    let got = query_reflexive_address_signed(&client, server_addr, Duration::from_secs(2), &signer)
+        .await
+        .expect("a mismatched-txid success decoy must not abort the exchange");
+    assert_eq!(got, reflexive);
+    server_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn after_first_challenge_any_other_response_is_refused_not_a_third_datagram() {
+    let (client, _client_addr) = bind_loopback().await;
+    let (server, server_addr) = bind_loopback().await;
+    let (signer, _spki) = ring_test_signer();
+
+    let server_task = tokio::spawn(async move {
+        let issuer = NonceIssuer::new_random();
+        let mut buf = [0u8; 512];
+        let (n, from) = server.recv_from(&mut buf).await.unwrap();
+        let (txid, _) = classify_request(&buf[..n]).unwrap();
+        let nonce = issuer.issue(from, now_unix());
+        server
+            .send_to(
+                &encode_challenge(&txid, ERR_UNAUTHENTICATED, Some(&nonce)),
+                from,
+            )
+            .await
+            .unwrap();
+
+        let (n, from) = server.recv_from(&mut buf).await.unwrap();
+        let (txid, _) = classify_request(&buf[..n]).unwrap();
+        // Not a 438: an ordinary malformed-refusal instead. The AfterFirstChallenge fallback must
+        // treat this as an immediate refusal, never attempt a third (re-signed) datagram.
+        server
+            .send_to(&encode_challenge(&txid, ERR_BAD_REQUEST, None), from)
+            .await
+            .unwrap();
+
+        let third =
+            tokio::time::timeout(Duration::from_millis(300), server.recv_from(&mut buf)).await;
+        assert!(
+            third.is_err(),
+            "an unexpected response after the first challenge must not provoke a third datagram"
+        );
+    });
+
+    let result =
+        query_reflexive_address_signed(&client, server_addr, Duration::from_secs(2), &signer).await;
+    assert_eq!(
+        result,
+        Err(SignedQueryError::Refused {
+            code: ERR_BAD_REQUEST
+        })
+    );
+    server_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn an_unrecognized_message_type_ends_the_exchange() {
+    let (client, _client_addr) = bind_loopback().await;
+    let (server, server_addr) = bind_loopback().await;
+    let (signer, _spki) = ring_test_signer();
+
+    let server_task = tokio::spawn(async move {
+        let mut buf = [0u8; 512];
+        let (n, from) = server.recv_from(&mut buf).await.unwrap();
+        let (txid, _) = classify_request(&buf[..n]).unwrap();
+        // Neither a success (0x0101) nor an error (0x0111) -- e.g. a STUN Indication (0x0011).
+        let mut msg = vec![0x00, 0x11, 0x00, 0x00];
+        msg.extend_from_slice(&dig_stun::MAGIC_COOKIE.to_be_bytes());
+        msg.extend_from_slice(&txid);
+        server.send_to(&msg, from).await.unwrap();
+    });
+
+    let result =
+        query_reflexive_address_signed(&client, server_addr, Duration::from_secs(2), &signer).await;
+    assert_eq!(
+        result,
+        Err(SignedQueryError::Stun(StunError::UnexpectedType(0x0011)))
+    );
+    server_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn a_truncated_datagram_from_the_server_ends_the_exchange() {
+    let (client, _client_addr) = bind_loopback().await;
+    let (server, server_addr) = bind_loopback().await;
+    let (signer, _spki) = ring_test_signer();
+
+    let server_task = tokio::spawn(async move {
+        let mut buf = [0u8; 512];
+        let (_n, from) = server.recv_from(&mut buf).await.unwrap();
+        server.send_to(&[0x01], from).await.unwrap(); // shorter than even a message-type field
+    });
+
+    let result =
+        query_reflexive_address_signed(&client, server_addr, Duration::from_secs(2), &signer).await;
+    assert_eq!(result, Err(SignedQueryError::Stun(StunError::Truncated)));
+    server_task.await.unwrap();
+}

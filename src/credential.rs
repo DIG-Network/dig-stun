@@ -17,8 +17,8 @@
 //!
 //! Internally split by concern — wire plumbing, the nonce, the signature, the request shape, the
 //! error-response shape, the decision table, and the signed client — but every public item is
-//! re-exported flat at this module's own path (`SPEC.md` §8.1), matching how [`crate::codec`] and
-//! [`crate::client`] are flattened to the crate root.
+//! re-exported flat at this module's own path (`SPEC.md` §8.1), matching how this crate's own
+//! (private) `codec` and `client` modules are flattened to the crate root.
 
 mod decide;
 mod nonce;
