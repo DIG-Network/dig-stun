@@ -31,4 +31,4 @@ worse than no answer at all: a null address is visible, and a wrong one is not.
 
 ## Status
 
-Pre-release. The API is not stable until `0.1.0` is published.
+Pre-release. The API is not stable until `0.1.1` is published.

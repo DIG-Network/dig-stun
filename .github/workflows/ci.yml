@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Format / Clippy / Build / Test / Docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Check clippy (all targets, all features, locked)
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+
+      - name: Build (release, locked)
+        run: cargo build --release --locked
+
+      - name: Run tests (all targets, all features, locked)
+        run: cargo test --workspace --all-targets --all-features --locked
+
+      # Every public item carries a doc-comment ([lints.rust] missing_docs = "deny" in Cargo.toml
+      # already fails the build on a gap); this additionally fails on a broken intra-doc link
+      # (`[Foo]` pointing at a symbol that doesn't exist), which plain `cargo doc` does not catch.
+      - name: Check documentation (rustdoc links, locked)
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --all-features --locked
+
+  coverage:
+    name: Coverage (>=80% lines)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      # Unit + integration coverage, CI-gated at >=80% lines (ecosystem standard, CLAUDE.md §2.3).
+      # Run through nextest so llvm-cov instruments the SAME execution (a separate `cargo test`
+      # collects zero coverage). `--retries 2` reports a flaky test rather than hard-failing; this
+      # crate's tests are all deterministic (no real sockets — `query_reflexive_address` is
+      # exercised elsewhere via its consumers, not over a live network here), so nothing is skipped.
+      - name: Run tests with coverage (nextest, retries 2, gate >=80% lines)
+        run: >-
+          cargo llvm-cov nextest --all-features --locked
+          --retries 2
+          --fail-under-lines 80
+          --lcov --output-path lcov.info
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: lcov-coverage
+          path: lcov.info
+          if-no-files-found: error

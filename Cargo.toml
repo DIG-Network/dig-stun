@@ -1,7 +1,8 @@
 [package]
 name = "dig-stun"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
+rust-version = "1.75.0"
 license = "Apache-2.0 OR MIT"
 description = "RFC 5389 STUN codec, client, address-scope table, peer observation and agreement — how a DIG node learns and believes its public address."
 repository = "https://github.com/DIG-Network/dig-stun"
@@ -10,6 +11,20 @@ keywords = ["stun", "nat", "reflexive", "rfc5389", "p2p"]
 categories = ["network-programming"]
 
 [dependencies]
+# CSPRNG for the STUN transaction id (RFC 5389 §10.1) — the ONLY anti-spoof check on a Binding
+# response besides source-address validation, so it MUST NOT be predictable. Same pin as dig-nat,
+# whose `stun.rs` this crate absorbs, so the dependency does not duplicate across the two crates.
+ring = "0.17"
+# Structured, `Clone + Eq`-friendly errors for `StunError` (`dig-nat/src/stun.rs:39` unchanged).
+thiserror = "2"
+# The client transaction (`query_reflexive_address`) is this crate's ONLY I/O and its only `async
+# fn`. Only the two features actually used: `net` for `UdpSocket`, `time` for `timeout`/`Instant`.
+# No `rt`/`macros`: this crate never runs its own executor, only the caller's.
+tokio = { version = "1", default-features = false, features = ["net", "time"] }
+
+[dev-dependencies]
+# Tests need an executor + the `#[tokio::test]` macro; the library itself does not (see above).
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "test-util"] }
 
 [lints.rust]
 missing_docs = "deny"
