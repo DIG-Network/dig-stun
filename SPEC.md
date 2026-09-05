@@ -3,11 +3,12 @@
 This document is the authoritative contract an independent reimplementation can be built against. It
 is not a README and carries no history.
 
-Every clause below is implemented in `0.1.1`. Clauses tagged **[EXTRACTED]** describe behaviour moved
-byte-for-byte and test-for-test from `dig-nat 0.21.1` `src/stun.rs` (origin/main `6d44a43`); the cited
-`dig-nat` line is where the behaviour was true before the move. Clauses tagged **[NEW]** did not exist
-anywhere before this crate. Clauses tagged **[RECONCILED]** replace two shipped implementations that
-disagreed (§5.4) — a deliberate behaviour change, and the only one in this crate's first release.
+Every clause below is implemented in `0.1.1` unless marked **[`0.2.0`]**, in which case it is
+implemented from that release. Clauses tagged **[EXTRACTED]** describe behaviour moved byte-for-byte
+and test-for-test from `dig-nat 0.21.1` `src/stun.rs` (origin/main `6d44a43`); the cited `dig-nat` line
+is where the behaviour was true before the move. Clauses tagged **[NEW]** did not exist anywhere before
+this crate. Clauses tagged **[RECONCILED]** replace two shipped implementations that disagreed (§5.4) —
+a deliberate behaviour change, and the only one in this crate's first release.
 
 ---
 
@@ -17,7 +18,7 @@ disagreed (§5.4) — a deliberate behaviour change, and the only one in this cr
 the public address the outside world sees its traffic arrive from, and how it decides whether to
 believe what it was told.
 
-It owns exactly four things:
+It owns exactly five things:
 
 1. **The RFC 5389 Binding codec** (§2, §3) — request and success-response, both directions.
 2. **The UDP STUN client** (§4) — one Binding transaction against one server over one socket.
@@ -26,6 +27,10 @@ It owns exactly four things:
 4. **The peer-observation role** (§6) and **the agreement rule** (§7) — the parts that let every
    directly-reachable DIG node act as a reflexive-address source for its peers, and let a requesting
    node combine what several sources said without trusting any one of them.
+5. **The signed-Binding credential** (§14) — the challenge/response that lets a DIG-operated UDP STUN
+   server tell a DIG node's ask from anyone else's, and the exact bytes a requester signs. The crate
+   owns the wire form, the nonce contract, the signing preimage and the verifier; it does NOT hold
+   private keys (§14.6).
 
 It deliberately does NOT own:
 
@@ -41,6 +46,9 @@ It deliberately does NOT own:
   agreement rule the consumer MUST apply.
 - **Any proof of inbound reachability.** Nothing in this crate proves a stranger can connect to the
   requester. §10 states exactly what each result does and does not establish.
+- **Any membership policy over a verified credential identity.** The credential yields a verified
+  SPKI (and so a `peer_id`); whether that identity is *admitted* is a decision of the deployment that
+  runs the server. This crate ships no such policy and defines no registry (§14.10).
 
 Units: every port is a 16-bit TCP or UDP port number; every duration is milliseconds unless a Rust
 `Duration` is named. No $DIG or XCH quantity appears in this crate.
@@ -98,6 +106,9 @@ A PURE parser. It MUST, in this order:
 
 It MUST NOT apply the scope guard of §5 — that is the client's job (§4). It MUST NOT verify a
 `FINGERPRINT` or `MESSAGE-INTEGRITY` attribute (this crate speaks unauthenticated Binding only).
+It MUST NOT interpret a Binding Error Response (type `0x0111`); that is `credential::parse_challenge`
+(§14.5). A caller that receives `UnexpectedType(0x0111)` from this function has asked a server that
+requires the credential (§14.8) with a client that does not speak it. **[`0.2.0`]**
 
 ### 2.5 `parse_binding_request(datagram: &[u8]) -> Result<TransactionId, StunError>` **[NEW]**
 
@@ -110,6 +121,10 @@ The server-side parser. It MUST:
    5389's "silently ignore" latitude does so by not replying.
 4. Reject `datagram.len() < 20 + message_length` as `Truncated`.
 5. Return the 12 id bytes. Attributes present on a request (e.g. `SOFTWARE`) are accepted and ignored.
+
+This function ignores attributes by design and is sufficient for a server that answers bare requests
+only. A server implementing §14 MUST use `credential::classify_request` (§14.5), which walks the
+attributes; the two agree on every datagram this function accepts. **[`0.2.0`]**
 
 ### 2.6 `(XOR-)MAPPED-ADDRESS` value layout (normative) **[EXTRACTED `:240-291`]**
 
@@ -529,7 +544,7 @@ ambiguity toward not establishing.
 
 ## 8. Public API surface
 
-### 8.1 Items (normative; `0.1.1`)
+### 8.1 Items (normative; `0.1.1` unless marked `0.2.0`)
 
 | Module | Items |
 |---|---|
@@ -537,8 +552,16 @@ ambiguity toward not establishing.
 | `dig_stun::scope` | `Scope`, `scope_of`, `scope_of_ip`, `is_usable_reflexive_addr`, `is_globally_routable` |
 | `dig_stun::observe` | `Direction`, `Path`, `SessionMeta`, `Refusal`, `observe`, `ObserveLimiter`, `OBSERVE_PER_SESSION_PER_MINUTE`, `OBSERVE_GLOBAL_PER_SECOND`, `MAX_TRACKED_SOURCES` |
 | `dig_stun::establish` | `Reading`, `SourceClass`, `FamilyVerdict`, `Established`, `establish`, `MIN_INDEPENDENT_CLASSES`, `PEER_ONLY_MIN_CLASSES` |
+| `dig_stun::credential` **[`0.2.0`]** | `ATTR_DIG_IDENTITY`, `ATTR_DIG_SIGNATURE`, `ATTR_ERROR_CODE`, `ATTR_REALM`, `ATTR_NONCE`, `BINDING_ERROR`, `REALM`, `SIG_DOMAIN_TAG`, `CREDENTIAL_VERSION`, `P256_SPKI_LEN`, `P256_SPKI_PREFIX`, `NONCE_LEN`, `NONCE_BUCKET_SECS`, `MAX_SIGNATURE_LEN`, `ERR_BAD_REQUEST`, `ERR_UNAUTHENTICATED`, `ERR_STALE_NONCE`, `CredentialError`, `StunSigner`, `RequestKind`, `classify_request`, `signing_message`, `verify_signed_request`, `VerifiedIdentity`, `NonceIssuer`, `NonceCheck`, `CredentialMode`, `ServerDecision`, `decide`, `encode_challenge`, `encode_identity_request`, `encode_signed_request`, `parse_challenge`, `Challenge`, `query_reflexive_address_signed`, `SignedQueryError` |
 
-`query_reflexive_address` is the crate's only `async fn` and its only I/O; everything else is pure.
+`query_reflexive_address` and `query_reflexive_address_signed` are the crate's only `async fn`s and its
+only I/O; everything else is pure.
+
+`CredentialError` is exported here even though the epic's original delta table for this module omitted
+it: `classify_request`, `verify_signed_request` and `decide` all name it in a public signature
+(`Result<_, CredentialError>` / `Option<Result<VerifiedIdentity, CredentialError>>`), so a consumer
+cannot match on those results — e.g. to distinguish `Malformed` (→ `400`) from a lower-level `Stun`
+failure — without a path to name the type. Recorded as a corrected omission, not a design change.
 
 ### 8.2 Re-export contract for `dig-nat` (normative for the extraction)
 
@@ -569,6 +592,10 @@ dig-nat. No consumer in the ecosystem implements a trait for it or names it by p
 - `license = "Apache-2.0 OR MIT"`, `rust-version = "1.75.0"`, matching `dig-nat`.
 - Published to crates.io as `dig-stun` (name verified free 2026-09-05: `index.crates.io/di/g-/dig-stun`
   → 404 with `User-Agent: dig-loop`). Consumers depend by version, never `git =` (NC-7).
+- **[`0.2.0`]** `ring` (already required above) additionally supplies `ring::hmac` (§14.4) and
+  `ring::signature` (§14.6); `ring::rand` was already in use (§3). No new dependency. The crate still
+  MUST NOT depend on any `dig-*` crate — which is why it verifies against raw SPKI bytes and never
+  computes a `peer_id` (§14.6, §14.10).
 
 ---
 
@@ -583,12 +610,30 @@ dig-nat. No consumer in the ecosystem implements a trait for it or names it by p
    source can prevent establishment (§7.3 step 3). The second property is deliberate and is a
    denial-of-advertisement lever for a peer that lies; the cost it imposes is an epoch's rewards, not
    money, and the dissenter is identifiable by its `witness`.
+5. **[`0.2.0`]** A signed Binding is answered only after the nonce it carries has been recomputed
+   under the server's secret for the sender's source address and one of the two current time buckets
+   (§14.4). Signature verification — the only expensive step — is therefore reached only by a sender
+   that received a datagram at the address it is sending from, within the last ≤ 120 s. A
+   spoofed-source flood cannot reach it at all; a same-source flood is bounded by the response limiter
+   the server already runs.
+6. **[`0.2.0`]** A captured signed Binding can be replayed only from the source address the nonce is
+   bound to, only at the server whose secret issued it, only within the nonce's validity, and yields
+   only the reply the original sender already received. No replay cache is kept and none is needed.
+7. **[`0.2.0`]** The signing preimage begins with `SIG_DOMAIN_TAG` (§14.6), so a signature produced
+   for this purpose is not a valid TLS `CertificateVerify`, `dig:holdings:v1` record signature, or any
+   other message the same leaf key signs, and vice versa.
+8. **[`0.2.0`]** The SPKI, and so the `peer_id`, is disclosed to the DIG-operated server on every
+   signed ask. A client MUST NOT send the credential to a third-party public STUN server (§14.9).
 
 A reader MAY NOT conclude from any result in this crate that: the requester is reachable at any port;
 the reported port is a listen mapping; the address is stable for an epoch; the address is the
 requester's only egress; a `PrivateScope` reading is wrong (it is a true reading and an unadvertisable
 one); or that agreement among `PEER_ONLY_MIN_CLASSES` classes is proof against an adversary who has
-eclipsed the requester's whole direct pool.
+eclipsed the requester's whole direct pool; **[`0.2.0`]** or that a verified credential proves the
+sender is a member of the DIG network, is registered with any relay, holds any coin, or is anything
+more than the holder of a P-256 private key (§14.10); or that a verified requester's ANSWER is more
+likely to be true — the credential authenticates the asker, never the reply, and §7 applies to every
+reading unchanged (NC-12).
 
 ---
 
@@ -620,6 +665,26 @@ The crate MUST ship these tests; each is a requirement, not a suggestion.
    `dig-nat`'s `tests/reflexive.rs` responder uses `encode_binding_success`; `dig-relay` asserts
    `build_binding_response(id, a) == dig_stun::encode_binding_success(&id, a)` for one v4 and one v6
    `a` (§11.4).
+10. **[`0.2.0`] Credential codec** — golden vectors for: the 26-byte `P256_SPKI_PREFIX`; a
+    bare-refusal `401` (44 bytes); a challenge `401` with `REALM` + a 27-character `NONCE` (88 bytes);
+    a `438` (84 bytes); a `400` (40 bytes); an identity request (116 bytes); and a signed request
+    built from a fixed test key and a fixed nonce (verify by re-running the verifier, not by
+    byte-comparing the DER signature, which is randomised).
+11. **[`0.2.0`] Nonce** — `issue` then `check` is `Fresh` in the same bucket and the next; `Stale`
+    two buckets later; `Invalid` for any other source IP, any other source PORT, any other secret, any
+    flipped byte, and a well-formed nonce of a wrong length; an IPv4-mapped and a native IPv4 source
+    yield the SAME nonce.
+12. **[`0.2.0`] Server decision table** — one test per row of §14.7, including: an identity request
+    is challenged in BOTH modes; a bare request is answered in `Advisory` and refused (no `NONCE`) in
+    `Required`; a valid signature under a `Stale` nonce is `438`, never `Answer`; a valid nonce with a
+    signature by a DIFFERENT key than the carried SPKI is `401`; a `DIG-SIGNATURE` that is not the
+    last attribute is `400`; `verify_signed_request` is NOT invoked for any row other than
+    Signed+Fresh (asserted via a counting reference-caller helper).
+13. **[`0.2.0`] Client state machine** — against a loopback responder: bare success on first request
+    is accepted (old server); challenge → signed → success; `438` once → re-signed → success; `438`
+    twice → `Refused{438}`; `401` with a `REALM` other than `dig-stun` → `Refused{401}` with no second
+    request sent; a challenge whose transaction id does not match is ignored and the wait continues;
+    the whole exchange respects ONE `timeout`.
 
 ### 11.4 Relay adoption (optional, deferred)
 
@@ -641,6 +706,14 @@ application with its own e2e and deploy pipeline and gains no behaviour from the
   refusal (§7.3: not a reading) and move on. Old and new nodes therefore interoperate with no
   negotiation: the method is a soft-fork addition.
 - The `source` grammar (§7.2) is additive: new prefixes may be added; existing renderings never change.
+- **[`0.2.0`]** adds `dig_stun::credential`. `StunError` is unchanged — no variant added; the
+  credential client has its own exhaustive `SignedQueryError`, so `dig-nat`'s re-export and every
+  exhaustive matcher of `StunError` keep compiling. `RequestKind`, `NonceCheck`, `CredentialMode`,
+  `ServerDecision` and `SignedQueryError` are exhaustive enums; adding a variant to any is a breaking
+  change.
+- The credential is **version 1** in every field that carries a version byte
+  (`CREDENTIAL_VERSION`). A receiver MUST answer `400` to any other version. A second version is not
+  additive without negotiation, and how it would be negotiated is out of scope for this document.
 
 ---
 
@@ -655,3 +728,407 @@ application with its own e2e and deploy pipeline and gains no behaviour from the
 - docs.dig.net `protocol/peer-network.md` §3 (STUN) and §7 (peer RPC).
 - `canonical` skill — "IPv4-in-IPv6 canonicalization for address-usability guards" (this crate is the
   reference implementation from `0.1.1`).
+- **[`0.2.0`]** `dig-relay` `SPEC.md` §5.2 — the UDP server that requires the credential (the only
+  implementer of §14.7 today).
+- **[`0.2.0`]** `dig-node` `SPEC.md` §25.10 — the requester (tiers 1-2 signed; tier 4 bare) and the
+  statement that the peer tier's authentication is the mTLS client certificate, not this credential.
+- **[`0.2.0`]** `relay.dig.net` `SPEC.md` "STUN credential" — the deployment mode and the post-deploy
+  probe.
+- **[`0.2.0`]** `canonical` skill — "The STUN credential proves key possession, not membership" (this
+  crate is the reference implementation from `0.2.0`).
+
+---
+
+## 14. The signed-Binding credential **[NEW, `0.2.0`]**
+
+A **signed Binding** is an RFC 5389 Binding request that carries the requester's TLS-leaf
+`SubjectPublicKeyInfo` and an ECDSA-P256 signature, by that leaf's private key, over a server-issued
+nonce. It proves three things and only three: (1) the sender **holds the private key** of the SPKI it
+carries — the same key whose SHA-256 is its `peer_id` on every mTLS peer session; (2) the sender
+**received the server's challenge** at the source address it is sending from (return-routability); (3)
+the request is **fresh** (≤ 120 s) and **bound to this server**. It proves **nothing about network
+membership**: any party can mint a P-256 key in microseconds and complete the exchange. What it buys is
+**attributability** (every answer is tied to a `peer_id`), an **accident filter** (generic STUN clients
+and scanners cannot use a DIG server once it requires the credential), a **cost floor** (one signature
+per ask), and a **pre-crypto gate** (no signature is verified for a source that has not completed a
+round trip). A reader MAY NOT describe this credential as access control or as proof that the sender is
+a DIG node.
+
+### 14.1 Purpose, and the bound on it
+
+A DIG-operated UDP STUN server (the relay's `:3478`, or one an operator names in `DIG_STUN_SERVER`)
+answers anyone who sends a well-formed Binding request. The credential lets such a server **refuse
+requests that do not come from a holder of a DIG peer identity key**, so that generic STUN clients,
+scanners and misdirected traffic stop consuming its answers, and so that every answer it does give is
+**attributable** to a stable `peer_id`.
+
+**What it does not do, stated once so nothing downstream over-reads it.** The identity key is
+self-generated (`dig-tls` `node_cert.rs:117`, `KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)`); the
+DigNetwork CA that signs it is public by design (`canonical`, "dig-tls" entry: "the CA key is
+intentionally NOT a secret"); and no registry of DIG identities exists that a UDP server could consult
+without the circularity of §14.10. Therefore a valid credential proves **key possession, freshness and
+return-routability** and nothing else. It raises an attacker's cost from "send 20 bytes" to "complete a
+round trip and compute one ECDSA signature per ask" — about 200 µs of CPU — and makes the attacker
+nameable. That is the whole of the security gain, and §10 item 5 is where most of it comes from.
+
+### 14.2 Universality — one rule, two mechanisms
+
+**Every DIG reflexive-address source MUST answer only a requester that has proven possession of the
+private key of a P-256 `SubjectPublicKeyInfo` whose SHA-256 is its `peer_id`.** The proof differs by
+transport, and a source MUST use exactly the mechanism its transport gives it:
+
+| Source | Transport | The proof | Where it is already true |
+|---|---|---|---|
+| a DIG node answering `dig.getObservedAddress` (§6) | mTLS peer session, client certificate mandatory | the TLS handshake itself — the client's `CertificateVerify` is an ECDSA-P256 signature by the leaf key over the handshake transcript, and rustls rejects the session without it | `dig-tls/src/verify.rs:357` `client_auth_mandatory() -> true`; dig-node `peer.rs:3711` `build_server_tls_config` → `dig_tls::server_config` |
+| a DIG-operated UDP STUN server (relay `:3478`, `DIG_STUN_SERVER`) | UDP, no transport identity | this section's signed Binding | this crate, `0.2.0` |
+| a third-party public STUN server (tier 4) | UDP, not DIG-operated | none — outside DIG's control; consulted bare | `dig-node` `net.rs:527` `PUBLIC_STUN_SERVERS` |
+
+A node MUST NOT add this credential to `dig.getObservedAddress`: the session already carries a stronger
+proof of the same key (a signature over the whole handshake, verified before any request is read), a
+second proof on the same connection gives the responder no new fact, and the limiter (§6.4) already keys
+on the authenticated `peer_id`. Adding ceremony to a channel that has the property is not "universal"; it
+is redundant. The requirement is universal in the RULE, not in the byte format.
+
+### 14.3 Wire — attributes and error responses (byte-level, normative)
+
+All DIG attributes are **comprehension-optional** (type ≥ `0x8000`, RFC 5389 §15/§18.2), chosen in the
+`0xC072–0xFFFF` block that IANA lists as Unassigned (verified 2026-09-05 against
+`iana.org/assignments/stun-parameters`). A server that does not know them ignores them and answers as it
+always did — which is exactly the behaviour the migration relies on (§14.8). They are NOT registered
+with IANA; a collision with a future assignment would matter only if a DIG client sent the attribute to
+a server implementing that assignment, which §14.9 forbids for non-DIG servers.
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `ATTR_DIG_IDENTITY: u16` | `0xD160` | the requester's TLS-leaf SPKI (§14.3.1) |
+| `ATTR_DIG_SIGNATURE: u16` | `0xD161` | the requester's signature (§14.3.2) |
+| `ATTR_ERROR_CODE: u16` | `0x0009` | RFC 5389 §15.6 |
+| `ATTR_REALM: u16` | `0x0014` | RFC 5389 §15.7; value is always `REALM` |
+| `ATTR_NONCE: u16` | `0x0015` | RFC 5389 §15.8; value per §14.4 |
+| `BINDING_ERROR: u16` | `0x0111` | method Binding, class Error Response |
+| `REALM: &str` | `"dig-stun"` | 8 bytes; the mechanism discriminator a client checks (§14.5) |
+| `CREDENTIAL_VERSION: u8` | `0x01` | the only version |
+| `ERR_BAD_REQUEST / ERR_UNAUTHENTICATED / ERR_STALE_NONCE: u16` | `400 / 401 / 438` | RFC 5389 §15.6 classes; 401 is spelled "Unauthenticated" per RFC 8489 |
+
+`REALM`, `NONCE`, `ERROR-CODE` are the standard attributes with their standard meanings; the RFC 5389
+long-term-credential mechanism (`USERNAME` / `MESSAGE-INTEGRITY`) is NOT implemented and the RFC 8489
+nonce cookie (`obMatJos2`) is deliberately NOT emitted, so a standards client reads a DIG `401` as an
+ordinary authentication failure it cannot satisfy — an error it understands, never a silent drop.
+
+#### 14.3.1 `DIG-IDENTITY` value — exactly 92 bytes
+
+```
+[version:1 = 0x01][spki_der:91]
+```
+
+`spki_der` MUST be the `SubjectPublicKeyInfo` DER of the requester's TLS leaf — the bytes
+`dig_tls::NodeCert::spki_der()` returns, the same bytes `peer_id_from_tls_spki_der` hashes. A P-256 SPKI
+with an uncompressed point is a fixed 91-byte DER whose first 26 bytes are constant:
+
+```
+P256_SPKI_LEN = 91
+P256_SPKI_PREFIX = 30 59 30 13 06 07 2a 86 48 ce 3d 02 01 06 08 2a 86 48 ce 3d 03 01 07 03 42 00
+byte[26] = 0x04 (uncompressed SEC1 point), bytes[27..91] = X ‖ Y
+```
+
+A receiver MUST reject (as `400`) any value whose length is not 92, whose version is not `0x01`, whose
+bytes `1..27` are not `P256_SPKI_PREFIX`, or whose byte `27` is not `0x04`. This accepts exactly the
+SPKIs `dig-tls` mints (`node_cert.rs:117`, ring-generated P-256, uncompressed) and rejects every other
+algorithm, curve and point encoding without an ASN.1 parser. 92 is a multiple of 4: no padding.
+
+#### 14.3.2 `DIG-SIGNATURE` value — 1 + (8..=72) bytes
+
+```
+[version:1 = 0x01][sig_der: ECDSA-P256-SHA256 signature, ASN.1 DER (RFC 3279 Ecdsa-Sig-Value)]
+```
+
+`MAX_SIGNATURE_LEN = 72`. A receiver MUST reject (`400`) a value shorter than 9 or longer than 73 bytes
+or with a version other than `0x01`. The DER form (rather than fixed `r‖s`) is chosen so the requester
+signs with the SAME `ring::signature::EcdsaKeyPair` it already holds for `dig:holdings:v1` records
+(`dig-node` `holdings.rs:155-163` `signer_from_node_cert`, `ECDSA_P256_SHA256_ASN1_SIGNING`) — one leaf
+signer object, no second key construction. `DIG-SIGNATURE` MUST be the LAST attribute of the request; a
+receiver MUST reject (`400`) a request with any attribute after it. Padding per RFC 5389 (to 4).
+
+#### 14.3.3 Error responses — three shapes, byte-exact
+
+Header: type `0x0111`, length, `MAGIC_COOKIE`, the REQUEST's transaction id. `ERROR-CODE` value is
+`00 00 <class> <number>` + UTF-8 reason phrase (RFC 5389 §15.6), padded to 4. Reason phrases are fixed:
+`401` → `"Unauthenticated"` (15), `438` → `"Stale Nonce"` (11), `400` → `"Bad Request"` (11).
+
+| Shape | Attributes | Size | Sent in reply to | Reflection ratio |
+|---|---|---|---|---|
+| bare refusal | `ERROR-CODE 401` | **44** bytes | a bare request in `Required` mode | 44/20 = 2.2 — equal to today's IPv6 success (44/20) |
+| challenge | `ERROR-CODE 401` + `REALM "dig-stun"` + `NONCE` (27 chars, padded 28) | **88** bytes | an identity request, or a signed request with an invalid nonce or bad signature | 88/116 = 0.76 — smaller than the request |
+| stale | `ERROR-CODE 438` + `REALM` + fresh `NONCE` | **84** bytes | a signed request whose nonce is from an expired bucket | 84/≥212 < 0.4 |
+| malformed | `ERROR-CODE 400` | **40** bytes | any credential attribute violating §14.3.1/§14.3.2 or the ordering rules | 40/≥116 < 0.35 |
+
+A challenge or stale response MUST NOT carry `XOR-MAPPED-ADDRESS`: that would hand the answer to a
+requester that has not yet proven anything, which is the one thing the credential exists to withhold. A
+bare request is 20 bytes and its source is unproven; answering it with an 88-byte challenge would raise
+the server's worst-case reflection ratio from 2.2 to 4.4 toward a spoofed victim, so a bare refusal
+carries no `NONCE` and stays at 44 bytes — exactly today's success-response ratio. A nonce is issued only
+to a request that already carries a 92-byte identity, so a challenge, stale, or malformed reply — each
+sent only to an already-credentialed request — is never larger than what triggered it. The bare refusal
+is the one shape with no such request to size against; it is bounded to today's baseline STUN success
+ratio (2.2) rather than exceeding it, so it adds no amplification headroom this credential did not
+already inherit from ordinary STUN. Golden vectors for all four shapes are §11 item 10.
+
+### 14.4 The nonce — stateless, source-bound, time-bucketed
+
+```rust
+pub const NONCE_LEN: usize = 20;            // raw; the NONCE attribute carries base64url(no pad) of it = 27 chars
+pub const NONCE_BUCKET_SECS: u64 = 60;
+pub struct NonceIssuer { /* secret: [u8; 32] */ }
+pub enum NonceCheck { Fresh, Stale, Invalid }   // exhaustive
+impl NonceIssuer {
+    pub fn new_random() -> Self;                              // ring::rand::SystemRandom; panics on CSPRNG failure (§3 rule)
+    pub fn from_secret(secret: [u8; 32]) -> Self;             // for deployments that must share one issuer across replicas
+    pub fn issue(&self, source: SocketAddr, now_unix_secs: u64) -> [u8; NONCE_LEN];
+    pub fn check(&self, nonce_attr_value: &[u8], source: SocketAddr, now_unix_secs: u64) -> NonceCheck;
+}
+```
+
+`issue` MUST compute, with `bucket = (now_unix_secs / NONCE_BUCKET_SECS) as u32`:
+
+```
+tag   = HMAC-SHA256(secret, b"dig:stun:nonce:v1" ‖ bucket_be(4) ‖ family(1) ‖ ip_bytes ‖ port_be(2))[..16]
+nonce = bucket_be(4) ‖ tag(16)
+```
+
+where `source` is FIRST folded per §5.3 (`Ipv6Addr::to_ipv4()`, so `::ffff:a.b.c.d` and `a.b.c.d` are one
+source, exactly as the limiter keys them) and then `family` is `0x01` with 4 `ip_bytes` for IPv4 or
+`0x02` with 16 for IPv6. The attribute value is the base64url encoding without padding (RFC 4648 §5) of
+those 20 bytes — 27 characters, all within RFC 5389's `qdtext`.
+
+`check` MUST: decode base64url (any decode failure or length ≠ 20 → `Invalid`); recompute `tag` for the
+nonce's OWN bucket and the caller's `source` and compare in constant time (mismatch → `Invalid`); then
+return `Fresh` if the nonce's bucket is `now_bucket` or `now_bucket − 1`, else `Stale`. Tag before bucket,
+so a forged nonce is never reported as merely stale. A nonce is therefore valid for **60–120 s**, for
+**one source ip:port**, at **the issuer that made it**. No state is kept per nonce, per client, or per
+transaction.
+
+**Replicas.** A deployment running several server processes behind one address MUST either share a
+secret (`from_secret`) or accept that a nonce issued by one replica is `Invalid` at another. Where the
+balancer pins a UDP 5-tuple to one target for the flow's lifetime — AWS NLB does, and both datagrams of a
+transaction share the client's socket — the per-process default is correct; a re-balanced flow costs the
+client one `401` re-challenge (§14.5 retries once), never a failure. The relay's deployment records which
+it relies on (relay.dig.net `SPEC.md`).
+
+**Clock.** Only the SERVER's clock is consulted, only to bucket its own nonces. A client needs no
+synchronised clock; a server whose clock jumps invalidates at most the nonces of the last two minutes.
+
+### 14.5 Server side — classification, decision, and the order of the cheap checks
+
+```rust
+pub enum RequestKind<'a> {                 // exhaustive
+    Bare,                                  // no DIG attribute
+    Identity { spki: &'a [u8] },           // DIG-IDENTITY, no NONCE, no DIG-SIGNATURE
+    Signed { spki: &'a [u8], nonce: &'a [u8], signature: &'a [u8] },
+}
+pub fn classify_request(datagram: &[u8]) -> Result<(TransactionId, RequestKind<'_>), CredentialError>;
+pub enum CredentialMode { Advisory, Required }   // exhaustive
+pub enum ServerDecision { Answer { identity: Option<VerifiedIdentity> }, Challenge { code: u16 }, Refuse { code: u16 } }
+pub fn decide(mode: CredentialMode, kind: &RequestKind, nonce: Option<NonceCheck>, verified: Option<Result<VerifiedIdentity, CredentialError>>) -> ServerDecision;
+pub fn encode_challenge(txid: &TransactionId, code: u16, nonce: Option<&[u8; NONCE_LEN]>) -> Vec<u8>;
+```
+
+`CredentialError` is exhaustive (`Stun(StunError)`, `Malformed`, `BadSignature`) — see the §8.1 note on
+why it is exported despite the epic's original delta omitting it.
+
+`classify_request` MUST perform §2.5's checks first (a datagram §2.5 rejects is rejected here with the
+same `StunError`, wrapped), then walk the attributes: unknown attributes of ANY type are ignored (the
+server keeps the RFC's stateless-ignore latitude it has always used; it does not emit `420`); a
+`DIG-IDENTITY` violating §14.3.1, a `DIG-SIGNATURE` violating §14.3.2 or not last, a `NONCE` or
+`DIG-SIGNATURE` without `DIG-IDENTITY`, a `NONCE` without `DIG-SIGNATURE` or vice versa, or a duplicated
+DIG attribute is `CredentialError::Malformed` (→ `400`). It allocates nothing and verifies nothing.
+
+**The order a server MUST evaluate a datagram in — cheapest first, crypto last:**
+
+1. `classify_request` (byte checks; ~ns).
+2. **The response limiter**, keyed on the source IP exactly as today (`dig-relay` `stun.rs:307`
+   `StunRateLimiter::allow`, or §6.4's `ObserveLimiter`). A datagram the limiter refuses produces NO
+   response and NO further work — including no nonce check and no verification. Every response shape in
+   §14.3.3 and every success spends one token; the credential adds no exemption and no new dimension.
+3. For `Signed`: `NonceIssuer::check` (one HMAC; ~1 µs). `Invalid` or `Stale` → the decision is made
+   without touching the signature.
+4. For `Signed` + `Fresh` only: `verify_signed_request` (§14.6; one P-256 verification; ~100 µs).
+
+**CPU bound this order guarantees.** Step 4 is reached at most `global_responses_per_sec` times per
+second (1000 by default in dig-relay), each by a source that received a datagram at its claimed address
+within 120 s. At ~100 µs per verification that is ≤ 0.1 CPU-second per second — on the relay's 256-CPU-unit
+Fargate task (0.25 vCPU) about 40 % of the task in the worst case, and only when ≥ 100 distinct real
+sources each sustain the per-IP cap. A spoofed-source flood costs one HMAC per datagram and never reaches
+step 4. Garbage signatures without a valid nonce never reach step 4. The operator's lever is the existing
+global cap.
+
+### 14.6 The signature — preimage, algorithm, verifier, signer
+
+```rust
+pub const SIG_DOMAIN_TAG: &[u8] = b"dig:stun:v1";
+pub fn signing_message(txid: &TransactionId, nonce_attr_value: &[u8], spki_der: &[u8]) -> Vec<u8>;
+pub struct VerifiedIdentity { spki: [u8; P256_SPKI_LEN] }   // #[non_exhaustive]; pub fn spki_der(&self) -> &[u8; 91]
+pub fn verify_signed_request(txid: &TransactionId, kind: &RequestKind /* must be Signed */) -> Result<VerifiedIdentity, CredentialError>;
+pub trait StunSigner {
+    fn spki_der(&self) -> &[u8];                 // exactly the 91 bytes of §14.3.1
+    fn sign(&self, message: &[u8]) -> Vec<u8>;   // ECDSA-P256-SHA256, ASN.1 DER
+}
+```
+
+The preimage is the FIELDS, not the datagram bytes (the shape `dig-gossip` uses at
+`holdings_announce.rs:363-392`, so the signed request's length field and padding never enter the
+signature and a DER signature of variable length is unproblematic):
+
+```
+signing_message = SIG_DOMAIN_TAG ‖ 0x01 ‖ transaction_id(12) ‖ nonce_len_be(2) ‖ nonce_attr_value ‖ spki_der(91)
+```
+
+`nonce_attr_value` is the `NONCE` attribute value EXACTLY as carried (the 27 base64url bytes), not the
+decoded 20. The signature is ECDSA with P-256 and SHA-256 (ring hashes the preimage internally), DER
+encoded. `verify_signed_request` MUST: take the 65-byte point at `spki[26..91]`; verify with
+`ring::signature::ECDSA_P256_SHA256_ASN1` over `signing_message(txid, nonce, spki)`; on success return
+`VerifiedIdentity` carrying the SPKI. A `kind` that is not `Signed` is a caller precondition violation;
+this crate returns `CredentialError::Malformed` for it rather than panicking, since the function sits on
+a path that ultimately parses untrusted datagrams. It MUST NOT compute a `peer_id` — that is
+`dig_tls::peer_id_from_tls_spki_der` (`dig-tls/src/identity.rs:71`), which this level-00 crate cannot
+depend on; callers that want the `peer_id` hash the SPKI with that function (dig-relay uses its own
+existing derivation at `tls.rs:177-180`, which is the same bytes).
+
+**What the preimage binds, and why each field.** `transaction_id`: the response the requester will
+accept. `nonce`: the issuing server, the source ip:port, the time bucket (§14.4) — freshness and
+return-routability without a client clock. `spki_der`: the key the signature is checked against, so the
+identity cannot be swapped under a valid signature. Nothing else is signed: the message type is fixed by
+the server (it answers Binding only), and any other attribute a sender adds is ignored (§14.5).
+
+**Signing oracle.** A requester will sign whatever nonce a `401` hands it, including one an on-path
+attacker forged. The resulting signature is valid only as a `dig:stun:v1` preimage — a STUN request at
+the server whose secret matches that nonce, from that source, within two minutes — and so is worth
+nothing to the attacker. This is why `SIG_DOMAIN_TAG` is first in the preimage and why the tag is
+distinct from `dig:holdings:v1` and from every TLS context string.
+
+**No private key in this crate.** `StunSigner` is implemented by the consumer over the key it already
+holds. dig-node implements it for the object `signer_from_node_cert` builds (`holdings.rs:155-163`: an
+`EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, cert.rustls_private_key().secret_der(), …)`
+paired with `cert.spki_der()`); no second `from_pkcs8` site is written. The client (§14.9) MUST check
+`signer.spki_der()` against §14.3.1 at construction and refuse to start a transaction otherwise (fail
+closed: a malformed identity never reaches the wire).
+
+### 14.7 The decision table (normative, exhaustive)
+
+| # | `RequestKind` | `CredentialMode` | nonce | signature | `ServerDecision` | response | counter |
+|---|---|---|---|---|---|---|---|
+| 1 | `Bare` | `Advisory` | – | – | `Answer{identity: None}` | success (§2.7) | `stun_requests`, `stun_unsigned` |
+| 2 | `Bare` | `Required` | – | – | `Refuse{401}` | bare refusal (44 B) | `stun_rejected` |
+| 3 | `Identity` | either | – | – | `Challenge{401}` | challenge (88 B) with a fresh nonce | `stun_challenges` |
+| 4 | `Signed` | either | `Invalid` | not checked | `Challenge{401}` | challenge with a fresh nonce | `stun_rejected` |
+| 5 | `Signed` | either | `Stale` | not checked | `Challenge{438}` | stale (84 B) with a fresh nonce | `stun_challenges` |
+| 6 | `Signed` | either | `Fresh` | `Err(BadSignature)` | `Challenge{401}` | challenge with a fresh nonce | `stun_rejected` |
+| 7 | `Signed` | either | `Fresh` | `Ok(identity)` | `Answer{identity: Some}` | success (§2.7) | `stun_requests`, `stun_signed` |
+| 8 | any `Malformed` (§14.5) | either | – | – | `Refuse{400}` | malformed (40 B) | `stun_rejected` |
+
+Rows 1-2 are inherently mode-specific (they ARE the two values `Bare` can take); rows 3-8 hold for
+BOTH modes, so §11 item 12's test suite exercises each of rows 3-8 once per mode in addition to rows 1
+and 2, alongside row 8's `Malformed` case (which never reaches `decide` — there is no `RequestKind` to
+classify it as, so the caller maps `classify_request`'s `Err(Malformed)` straight to
+`encode_challenge(txid, 400, None)`). **An identity request is challenged in BOTH modes.** That is what
+makes the client's path identical before and after a deployment flips to `Required`, lets a server
+measure its signed population while still `Advisory`, and lets the deploy probe exercise the signed path
+from day one. Every response passes the limiter (§14.5 step 2) before it is sent.
+
+The success response to a signed request is the ordinary §2.7 success — it carries no acknowledgement of
+the credential and is byte-identical to the one an unsigned request receives. The server MUST NOT sign
+its response (there is no server key distribution, and NC-12 makes agreement, not authentication, the
+defence against a lying server — §7 unchanged). It MUST NOT log the SPKI or `peer_id` above `debug`, MUST
+NOT persist which identities asked, and MAY count per-identity only in bounded memory (the same posture
+as §6.5).
+
+### 14.8 Modes and migration — advisory first, then required
+
+`CredentialMode` is a SERVER deployment setting, never wire-negotiated. Its two values differ in exactly
+one row of §14.7 (row 1 vs row 2: what a bare request gets). The sequence a deployment MUST follow:
+
+1. **Ship `Advisory`.** Bare requests are answered exactly as before; identity requests are challenged
+   and signed requests answered and counted. Nothing any existing client does changes outcome. The
+   server exposes `stun_signed`, `stun_unsigned`, `stun_challenges`, `stun_rejected` beside the existing
+   `stun_requests` so the operator can watch adoption. `stun_signed` is **vacuously zero** until a client
+   that speaks §14.9 exists; the deploy probe (relay.dig.net delta) is the only non-vacuous exerciser
+   until dig-node adopts.
+2. **Flip to `Required`** when `stun_unsigned` has fallen to the level the operator is willing to refuse.
+   The flip is a configuration change and nothing else. From then on a bare request gets row 2.
+
+**What an OLD node sees after the flip.** A dig-node that predates §14.9 sends a bare request and
+receives the 44-byte `401`; its `parse_binding_response` (§2.4) returns `UnexpectedType(0x0111)`; its
+tier walk moves to the next endpoint and, per its existing rule, warns that the relay tier did not answer
+while something below it did. So: an error, logged, with a reason the operator can act on ("the relay is
+not answering my node — upgrade"), and the node keeps working from the public tier. Not a silent drop;
+not a crash; one tier lost until the node updates.
+
+**Failure directions.** A wrong server secret, a replica mismatch or a clock jump produces `401`/`438` →
+the client re-challenges once, then treats the server as refusing → one fewer reading → at worst
+`Insufficient` (§7.3) → nothing advertised. A verifier bug that ACCEPTS invalid signatures mis-attributes
+asks but changes no address answer, and every answer is still subject to §7. A verifier bug that REJECTS
+valid signatures loses the relay tier for every node — visible in `dign network-info` as a missing
+`relay:` class. Every direction is closed or visible; none reaches a coin.
+
+### 14.9 Client side — `query_reflexive_address_signed`
+
+```rust
+pub struct Challenge { pub code: u16, pub realm: Option<String>, pub nonce: Option<Vec<u8>> }
+pub fn parse_challenge(msg: &[u8], expected_txid: &TransactionId) -> Result<Challenge, StunError>;   // Binding Error Response only
+pub fn encode_identity_request(txid: &TransactionId, spki_der: &[u8]) -> Vec<u8>;                    // header + DIG-IDENTITY (116 B)
+pub fn encode_signed_request(txid: &TransactionId, nonce_attr_value: &[u8], signer: &dyn StunSigner) -> Vec<u8>;  // header + DIG-IDENTITY + NONCE + DIG-SIGNATURE (≤ 228 B)
+pub enum SignedQueryError { Stun(StunError), Refused { code: u16 }, BadChallenge }                   // exhaustive
+pub async fn query_reflexive_address_signed(socket: &UdpSocket, server: SocketAddr, timeout: Duration, signer: &dyn StunSigner) -> Result<SocketAddr, SignedQueryError>;
+```
+
+One signed transaction. It MUST:
+
+1. Check `signer.spki_der()` per §14.3.1 BEFORE sending anything; on failure return
+   `SignedQueryError::BadChallenge` (its documented meaning is "the credential exchange cannot proceed":
+   a malformed signer SPKI, or a challenge that cannot be satisfied). Nothing is added to `StunError`.
+2. Send `encode_identity_request(new_transaction_id(), spki)` to `server`.
+3. Receive with §4's source validation and the ONE `timeout` for the whole exchange, ignoring datagrams
+   not from `server` and any response whose transaction id does not match the outstanding request:
+   - a **success** (`0x0101`) → parse per §2.4, apply the §5 guard exactly as §4 step 4, return. (This is
+     an old relay, a non-DIG server that ignored the attribute, or an `Advisory` server given a bare ask
+     — the client does not require a challenge.)
+   - an **error** (`0x0111`) → `parse_challenge`:
+     - `401` with `realm == Some("dig-stun")` and a nonce → go to 4 (first time only).
+     - `438` with a nonce → go to 4 (at most ONCE after a signed request has been sent; a second `438` is
+       `Refused{438}`).
+     - `401` without `realm == "dig-stun"`, or without a nonce, or any other code → `Refused{code}`. No
+       further datagram is sent. (A `401` with a foreign realm is a long-term-credential server the
+       client cannot satisfy; a `401` without a nonce is a `Required` server answering a BARE ask, which
+       this function never sends — treat as refusal.)
+   - anything else → §2.4's error, wrapped in `Stun`.
+4. Send `encode_signed_request(new_transaction_id(), nonce, signer)` — a NEW transaction id — and return
+   to 3.
+
+At most three datagrams are sent (identity, signed, re-signed after one `438`). The result has exactly
+§4's meaning. **The credential MUST be sent only to DIG-operated servers**: in dig-node terms, the
+`operator:` and `relay:` tiers. The `public:` tier MUST keep using `query_reflexive_address` (bare) —
+those servers would ignore the attribute (comprehension-optional) and the SPKI would tell a third party
+which DIG node is asking, which the public tier otherwise does not learn.
+
+IPv6-first (§5.2) is unchanged: the credential rides on each transaction; the walk order and the family
+choice are the caller's (§1: tier policy is the consumer's).
+
+### 14.10 What the key is checked against — nothing, and why that is the honest answer
+
+The verifier checks the signature against **the SPKI the request carries**, and nothing else. The
+alternatives were evaluated and are recorded so no one re-derives them:
+
+| Check the key against | Membership proven? | Cost | Why not (today) |
+|---|---|---|---|
+| **nothing** (any valid P-256 key) | **no** | none | — this is the specified behaviour; it buys §14.1's list and is labelled as such |
+| the relay's registration table | only where the table is authenticated | a lookup | on `relay.dig.net` TLS terminates at the NLB, so `Register`'s `peer_id` is self-declared (`dig-relay` `server.rs:640` `verified_peer_id: Option`, `None` on the plain-ws path; the mTLS listener that would verify it is optional, `tls.rs:1-30`) — the set is not authenticated; and dig-node discovers its address BEFORE it registers (`peer.rs:2682` → `:2731`), so gating STUN on registration is circular for the node the relay exists to serve; and an `operator:`-tier STUN server has no registry at all |
+| the DHT / gossip pool | no (Sybil: identities are free — `canonical` line 781, "attacker IDENTITIES are free and unlimited") | a lookup | proves the key has been SEEN, not that it is anyone in particular; and a brand-new node has not been seen |
+| on-chain evidence (mirror coin, collateral) | yes, for the asking key | a chain read on a UDP hot path | circular: the mirror coin carries the ADDRESS this ask is trying to learn (dig-node SPEC §25.10); a chain read per datagram is a latency and availability coupling the STUN path cannot carry; the retainer economy that would give a node a coin BEFORE it has an address is epic #1202, FUTURE, vacuous today |
+| a per-identity rate budget | no | a bounded map | keys are free, so a per-key budget bounds honest nodes and not attackers; return-routability already makes the per-IP key real (§14.4); MAY be added later as an ADDITIVE fairness improvement for CGNAT'd populations (many honest nodes behind one IP share one 5/s budget today — unchanged by this spec) |
+
+The specified design therefore keeps the door open without pretending it is closed: `VerifiedIdentity`
+gives the deployment a verified SPKI and `peer_id`, and a deployment MAY refuse identities by any policy
+it can compute — this crate ships none, and this document defines none. When an AUTHENTICATED registry
+exists (the relay's mTLS listener on a deployment that terminates TLS in-task; or #1202's retainers),
+"is this `peer_id` registered/retained" becomes a one-line policy over the value §14.6 already returns,
+with no wire change. Until then, a reader MUST describe this credential as **attributable,
+return-routable, fresh — not as membership**.
