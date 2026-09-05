@@ -18,6 +18,10 @@ public address.
 - **Agreement** — `establish`: per address family, a unanimous IP across all readings, at least two
   independent source classes (three when every class is a peer), and global unicast. One dissenter
   blocks; it fails closed.
+- **The signed-Binding credential** (`0.2.0`, `credential` module) — the challenge/response that lets
+  a DIG-operated UDP STUN server tell a DIG node's ask from anyone else's. It proves key possession,
+  freshness, and return-routability — **never network membership**; see `SPEC.md` §14 before treating
+  a verified credential as access control.
 
 ## Why agreement, and not a single answer
 
@@ -31,4 +35,5 @@ worse than no answer at all: a null address is visible, and a wrong one is not.
 
 ## Status
 
-Pre-release. The API is not stable until `0.1.1` is published.
+Published to crates.io (`0.1.1`). `0.2.0` adds the credential additively; nothing in `0.1.1`'s
+surface changes.
