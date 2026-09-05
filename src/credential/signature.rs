@@ -75,7 +75,7 @@ impl VerifiedIdentity {
 /// `RequestKind`'s fields are public, so a `Signed` variant reaching this function is not
 /// guaranteed to carry the 91-byte SPKI shape [`crate::credential::classify_request`] would have
 /// enforced — only a value built from the wire via that parser gets that guarantee for free. This
-/// function re-validates the shape itself ([`is_valid_spki_der`]) before it slices `spki`, so a
+/// function re-validates the shape itself (`is_valid_spki_der`) before it slices `spki`, so a
 /// directly-constructed `Signed` carrying a too-short or otherwise malformed SPKI returns
 /// [`CredentialError::Malformed`] rather than panicking on an out-of-bounds index.
 ///
@@ -83,7 +83,7 @@ impl VerifiedIdentity {
 ///
 /// [`CredentialError::BadSignature`] when the signature does not verify (wrong key, wrong
 /// preimage, or corrupt DER); [`CredentialError::Malformed`] when `kind` is not `Signed`, or when
-/// its `spki` does not have the shape [`is_valid_spki_der`] requires.
+/// its `spki` does not have the shape `is_valid_spki_der` requires.
 pub fn verify_signed_request(
     txid: &TransactionId,
     kind: &RequestKind<'_>,
