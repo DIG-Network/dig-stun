@@ -106,9 +106,12 @@ pub fn observe(meta: &SessionMeta) -> Result<SocketAddr, Refusal> {
 }
 
 /// Default: how many `dig.getObservedAddress` answers one authenticated session may receive per
-/// rolling minute — and, independently, how many a single source IP may receive per rolling minute
-/// (`ObserveLimiter::new`'s single `per_session_per_minute` parameter governs both dimensions;
-/// `SPEC.md` §6.4).
+/// rolling minute — and, independently, how many a single source IP may receive per rolling minute.
+/// These are TWO separately-tracked budgets (a session map and a source-IP map, each evaluated on
+/// its own), not one: `ObserveLimiter::new`'s single `per_session_and_source_per_minute` argument
+/// sets the SAME numeric capacity for both, because a session is usually pinned to one IP, but
+/// CGNAT can put many sessions behind one — so tracking them independently, even at a shared rate,
+/// catches an abuser hiding behind either grouping (`SPEC.md` §6.4).
 pub const OBSERVE_PER_SESSION_PER_MINUTE: u32 = 6;
 /// Default: how many answers this node may send in total per second, across every session.
 pub const OBSERVE_GLOBAL_PER_SECOND: u32 = 64;
@@ -183,11 +186,19 @@ fn bucket_for<'m, K: std::hash::Hash + Eq + Clone>(
 /// budget, an independent per-source-IP budget, and a global budget checked only once both narrower
 /// budgets already permit — so one abuser can never drain the budget meant for everyone else.
 ///
+/// **Three budgets tracked, from only TWO numbers.** The session budget and the source-IP budget
+/// are separate maps, each consulted and spent independently — but [`ObserveLimiter::new`] takes a
+/// single capacity that sizes BOTH of them identically, because a session is usually pinned to one
+/// source IP and giving them independent numbers would add a knob nobody has a reason to turn
+/// differently. If a real deployment ever needs the two to diverge, that is a signature change, not
+/// a silent one: see the constructor's own doc for how to request it.
+///
 /// Keys are TRANSPORT facts: the authenticated session's peer_id, and the accepted connection's
 /// source IP (folded per `SPEC.md` §5.3). `dig.getObservedAddress` takes no request parameters, so
 /// there is no payload for either key to come from.
 pub struct ObserveLimiter {
-    per_minute_capacity: u32,
+    /// The SAME capacity applied to both the per-session map and the per-source-IP map.
+    session_and_source_capacity: u32,
     global_capacity: u32,
     per_session: HashMap<String, TokenBucket>,
     per_source: HashMap<IpAddr, TokenBucket>,
@@ -195,14 +206,21 @@ pub struct ObserveLimiter {
 }
 
 impl ObserveLimiter {
-    /// `per_session_per_minute` bounds BOTH the per-session and the per-source-IP dimension (a
-    /// session is usually pinned to one source IP, but CGNAT can put many sessions behind one, so
-    /// the two dimensions are tracked independently even though they share a rate).
-    /// `global_per_second` bounds the shared dimension. A `0` capacity denies every request in that
-    /// dimension (a bucket that starts and refills to zero tokens can never be spent from).
-    pub fn new(per_session_per_minute: u32, global_per_second: u32) -> Self {
+    /// `per_session_and_source_per_minute` is ONE number that sizes TWO independent budgets: how
+    /// many answers a single authenticated session may receive per rolling minute, AND, separately,
+    /// how many a single source IP may receive per rolling minute — the same capacity, two
+    /// different keys, each with its own map and its own refill window (`SPEC.md` §6.4). This is
+    /// deliberate, not a simplification that lost a parameter: a session is usually pinned to one
+    /// source IP, but CGNAT can put many sessions behind one, so the two maps still have to be
+    /// consulted independently even though they share a rate.
+    ///
+    /// `global_per_second` sizes the third, shared budget.
+    ///
+    /// A `0` capacity in either argument denies every request in that dimension — a bucket that
+    /// starts and refills to zero tokens can never be spent from.
+    pub fn new(per_session_and_source_per_minute: u32, global_per_second: u32) -> Self {
         ObserveLimiter {
-            per_minute_capacity: per_session_per_minute,
+            session_and_source_capacity: per_session_and_source_per_minute,
             global_capacity: global_per_second,
             per_session: HashMap::new(),
             per_source: HashMap::new(),
@@ -220,7 +238,7 @@ impl ObserveLimiter {
     pub fn allow(&mut self, session: &str, source: IpAddr, now_ms: u64) -> bool {
         let source = fold_ip(source);
         let session_key = session.to_string();
-        let capacity = self.per_minute_capacity;
+        let capacity = self.session_and_source_capacity;
 
         let session_bucket = bucket_for(
             &mut self.per_session,

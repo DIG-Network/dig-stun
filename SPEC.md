@@ -3,7 +3,7 @@
 This document is the authoritative contract an independent reimplementation can be built against. It
 is not a README and carries no history.
 
-Every clause below is implemented in `0.1.0`. Clauses tagged **[EXTRACTED]** describe behaviour moved
+Every clause below is implemented in `0.1.1`. Clauses tagged **[EXTRACTED]** describe behaviour moved
 byte-for-byte and test-for-test from `dig-nat 0.21.1` `src/stun.rs` (origin/main `6d44a43`); the cited
 `dig-nat` line is where the behaviour was true before the move. Clauses tagged **[NEW]** did not exist
 anywhere before this crate. Clauses tagged **[RECONCILED]** replace two shipped implementations that
@@ -158,7 +158,7 @@ Golden vectors (normative), id `00 01 02 03 04 05 06 07 08 09 0a 0b`:
 The enum MUST derive `Debug, Clone, PartialEq, Eq` and implement `std::error::Error` (via
 `thiserror`) with the display strings at `dig-nat/src/stun.rs:40-62`. It is `#[non_exhaustive]`-FREE
 today; adding a variant is therefore a breaking change for consumers that match exhaustively
-(`dig-nat` re-exports it, §8.2). No variant is added in `0.1.0`.
+(`dig-nat` re-exports it, §8.2). No variant is added in `0.1.1`.
 
 ---
 
@@ -373,7 +373,10 @@ pub const OBSERVE_GLOBAL_PER_SECOND: u32 = 64;
 pub const MAX_TRACKED_SOURCES: usize = 4096;
 pub struct ObserveLimiter { /* per-session buckets, per-source-IP buckets, one global bucket */ }
 impl ObserveLimiter {
-    pub fn new(per_session_per_minute: u32, global_per_second: u32) -> Self;
+    /// `per_session_and_source_per_minute` sizes BOTH the per-session budget and the per-source-IP
+    /// budget — one number, two independently-tracked, independently-keyed maps (§6.4's constructor
+    /// note). `global_per_second` sizes the third, shared budget.
+    pub fn new(per_session_and_source_per_minute: u32, global_per_second: u32) -> Self;
     /// `session` = the authenticated peer_id of the asking session; `source` = the transport-observed
     /// remote IP (folded per §5.3). `now_ms` is caller-supplied so the decision is pure and testable.
     pub fn allow(&mut self, session: &str, source: IpAddr, now_ms: u64) -> bool;
@@ -526,7 +529,7 @@ ambiguity toward not establishing.
 
 ## 8. Public API surface
 
-### 8.1 Items (normative; `0.1.0`)
+### 8.1 Items (normative; `0.1.1`)
 
 | Module | Items |
 |---|---|
@@ -629,7 +632,7 @@ application with its own e2e and deploy pipeline and gains no behaviour from the
 
 ## 12. Versioning and compatibility
 
-- `0.1.0` is the first release. Everything in §8.1 is public; `StunError`, `Scope`, `Refusal`,
+- `0.1.1` is the first release. Everything in §8.1 is public; `StunError`, `Scope`, `Refusal`,
   `FamilyVerdict` are exhaustive enums and adding a variant to any of them is a breaking change.
   `Reading` and `SessionMeta` MUST be `#[non_exhaustive]` with constructors, so an additive field is a
   patch for consumers.
@@ -651,4 +654,4 @@ application with its own e2e and deploy pipeline and gains no behaviour from the
 - `dig-node` `SPEC.md` §25.10 — the derived advertisement and its agreement gate.
 - docs.dig.net `protocol/peer-network.md` §3 (STUN) and §7 (peer RPC).
 - `canonical` skill — "IPv4-in-IPv6 canonicalization for address-usability guards" (this crate is the
-  reference implementation from `0.1.0`).
+  reference implementation from `0.1.1`).
