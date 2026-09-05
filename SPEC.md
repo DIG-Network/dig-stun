@@ -1,17 +1,13 @@
 # dig-stun — Normative Specification
 
-> **Implementation status (remove this banner in the PR that makes the last clause true).**
-> Specified 2026-09-05 ahead of implementation (spec-first, dig_ecosystem CLAUDE.md §4.2, §1.10), for
-> epic https://github.com/DIG-Network/dig_ecosystem/issues/3199. Every clause below is a requirement on
-> the crate's first release (`0.1.0`). Clauses tagged **[EXTRACTED]** describe behaviour that exists
-> today in `dig-nat 0.21.1` `src/stun.rs` (origin/main `6d44a43`) and MUST move byte-for-byte and
-> test-for-test; the cited `dig-nat` line is where the behaviour is true today. Clauses tagged **[NEW]**
-> are specified and not yet implemented anywhere. Clauses tagged **[RECONCILED]** replace two shipped
-> implementations that disagree (§5.4) — they are a deliberate behaviour change and are the only one in
-> this crate's first release.
-
 This document is the authoritative contract an independent reimplementation can be built against. It
-is not a README and carries no history beyond the status banner.
+is not a README and carries no history.
+
+Every clause below is implemented in `0.1.0`. Clauses tagged **[EXTRACTED]** describe behaviour moved
+byte-for-byte and test-for-test from `dig-nat 0.21.1` `src/stun.rs` (origin/main `6d44a43`); the cited
+`dig-nat` line is where the behaviour was true before the move. Clauses tagged **[NEW]** did not exist
+anywhere before this crate. Clauses tagged **[RECONCILED]** replace two shipped implementations that
+disagreed (§5.4) — a deliberate behaviour change, and the only one in this crate's first release.
 
 ---
 
