@@ -15,6 +15,27 @@
 //! caller MUST NOT describe a verified credential as access control or as proof the sender is a
 //! member of the DIG network.
 //!
-//! This module is placeholder scaffolding — filled in clause-by-clause against the SPEC delta.
+//! Internally split by concern — wire plumbing, the nonce, the signature, the request shape, the
+//! error-response shape, the decision table, and the signed client — but every public item is
+//! re-exported flat at this module's own path (`SPEC.md` §8.1), matching how [`crate::codec`] and
+//! [`crate::client`] are flattened to the crate root.
 
-#![allow(dead_code)] // populated incrementally; every item gains a caller as it lands
+mod decide;
+mod nonce;
+mod request;
+mod response;
+mod signature;
+mod signed_client;
+mod wire;
+
+pub use decide::{decide, CredentialMode, ServerDecision};
+pub use nonce::{NonceCheck, NonceIssuer, NONCE_BUCKET_SECS, NONCE_LEN};
+pub use request::{classify_request, encode_identity_request, encode_signed_request, RequestKind};
+pub use response::{encode_challenge, parse_challenge, Challenge};
+pub use signature::{signing_message, verify_signed_request, StunSigner, VerifiedIdentity, SIG_DOMAIN_TAG};
+pub use signed_client::{query_reflexive_address_signed, SignedQueryError};
+pub use wire::{
+    CredentialError, ATTR_DIG_IDENTITY, ATTR_DIG_SIGNATURE, ATTR_ERROR_CODE, ATTR_NONCE,
+    ATTR_REALM, BINDING_ERROR, CREDENTIAL_VERSION, ERR_BAD_REQUEST, ERR_STALE_NONCE,
+    ERR_UNAUTHENTICATED, MAX_SIGNATURE_LEN, P256_SPKI_LEN, P256_SPKI_PREFIX, REALM,
+};
