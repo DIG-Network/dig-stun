@@ -93,7 +93,12 @@ impl NonceIssuer {
     /// `source` at `now_unix_secs` (`SPEC.md` §14.4). Recomputes the tag for the nonce's OWN
     /// bucket (not `now`'s) before ever looking at freshness, so a forged nonce is `Invalid`
     /// rather than `Stale` regardless of what bucket number it claims.
-    pub fn check(&self, nonce_attr_value: &[u8], source: SocketAddr, now_unix_secs: u64) -> NonceCheck {
+    pub fn check(
+        &self,
+        nonce_attr_value: &[u8],
+        source: SocketAddr,
+        now_unix_secs: u64,
+    ) -> NonceCheck {
         let decoded = match base64url_decode(nonce_attr_value) {
             Some(bytes) if bytes.len() == NONCE_LEN => bytes,
             _ => return NonceCheck::Invalid,
@@ -154,4 +159,3 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     }
     diff == 0
 }
-

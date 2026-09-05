@@ -3,8 +3,8 @@
 //! already has (dig-node reuses `signer_from_node_cert`'s object, per the SPEC's citation).
 
 use crate::codec::TransactionId;
-use crate::credential::wire::CredentialError;
 use crate::credential::request::RequestKind;
+use crate::credential::wire::CredentialError;
 
 /// Domain-separates a `dig:stun:v1` signature from every other message the same TLS-leaf key
 /// signs — a TLS `CertificateVerify`, a `dig:holdings:v1` record, or a future purpose — so a

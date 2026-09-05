@@ -32,7 +32,9 @@ pub use decide::{decide, CredentialMode, ServerDecision};
 pub use nonce::{NonceCheck, NonceIssuer, NONCE_BUCKET_SECS, NONCE_LEN};
 pub use request::{classify_request, encode_identity_request, encode_signed_request, RequestKind};
 pub use response::{encode_challenge, parse_challenge, Challenge};
-pub use signature::{signing_message, verify_signed_request, StunSigner, VerifiedIdentity, SIG_DOMAIN_TAG};
+pub use signature::{
+    signing_message, verify_signed_request, StunSigner, VerifiedIdentity, SIG_DOMAIN_TAG,
+};
 pub use signed_client::{query_reflexive_address_signed, SignedQueryError};
 pub use wire::{
     CredentialError, ATTR_DIG_IDENTITY, ATTR_DIG_SIGNATURE, ATTR_ERROR_CODE, ATTR_NONCE,

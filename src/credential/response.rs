@@ -29,7 +29,9 @@ fn reason_phrase(code: u16) -> &'static str {
         ERR_UNAUTHENTICATED => "Unauthenticated",
         ERR_STALE_NONCE => "Stale Nonce",
         ERR_BAD_REQUEST => "Bad Request",
-        other => panic!("encode_challenge: unsupported error code {other} (caller error, not wire input)"),
+        other => panic!(
+            "encode_challenge: unsupported error code {other} (caller error, not wire input)"
+        ),
     }
 }
 
@@ -41,7 +43,11 @@ fn reason_phrase(code: u16) -> &'static str {
 /// A response built with `nonce = Some(..)` never carries `XOR-MAPPED-ADDRESS`: handing the answer
 /// to a requester that has not yet proven anything is exactly what the credential exists to
 /// withhold (`SPEC.md` §14.3.3).
-pub fn encode_challenge(txid: &TransactionId, code: u16, nonce: Option<&[u8; NONCE_LEN]>) -> Vec<u8> {
+pub fn encode_challenge(
+    txid: &TransactionId,
+    code: u16,
+    nonce: Option<&[u8; NONCE_LEN]>,
+) -> Vec<u8> {
     let reason = reason_phrase(code);
     let mut error_code_value = Vec::with_capacity(4 + reason.len());
     error_code_value.extend_from_slice(&[0, 0, (code / 100) as u8, (code % 100) as u8]);

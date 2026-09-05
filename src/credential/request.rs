@@ -5,7 +5,7 @@
 use crate::codec::{parse_binding_request, TransactionId, BINDING_REQUEST};
 use crate::credential::signature::StunSigner;
 use crate::credential::wire::{
-    is_valid_spki_der, is_valid_signature_der_len, write_attr, write_header, CredentialError,
+    is_valid_signature_der_len, is_valid_spki_der, write_attr, write_header, CredentialError,
     ATTR_DIG_IDENTITY, ATTR_DIG_SIGNATURE, ATTR_NONCE, CREDENTIAL_VERSION,
 };
 
@@ -47,7 +47,9 @@ pub enum RequestKind<'a> {
 ///
 /// Allocates nothing; verifies nothing (that is [`crate::credential::verify_signed_request`],
 /// called by the caller only for [`RequestKind::Signed`] with a fresh nonce).
-pub fn classify_request(datagram: &[u8]) -> Result<(TransactionId, RequestKind<'_>), CredentialError> {
+pub fn classify_request(
+    datagram: &[u8],
+) -> Result<(TransactionId, RequestKind<'_>), CredentialError> {
     let txid = parse_binding_request(datagram)?;
     // parse_binding_request already proved datagram.len() >= 20 + msg_len, so this slice is safe.
     let msg_len = u16::from_be_bytes([datagram[2], datagram[3]]) as usize;
@@ -100,7 +102,10 @@ fn classify_attrs(area: &[u8]) -> Result<RequestKind<'_>, CredentialError> {
                 nonce = Some(value);
             }
             ATTR_DIG_SIGNATURE => {
-                if value.is_empty() || value[0] != CREDENTIAL_VERSION || !is_valid_signature_der_len(&value[1..]) {
+                if value.is_empty()
+                    || value[0] != CREDENTIAL_VERSION
+                    || !is_valid_signature_der_len(&value[1..])
+                {
                     return Err(CredentialError::Malformed);
                 }
                 signature = Some(&value[1..]);

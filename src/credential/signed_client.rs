@@ -80,7 +80,12 @@ pub async fn query_reflexive_address_signed(
     let mut buf = [0u8; 512];
 
     let mut expected_txid = new_transaction_id();
-    send(socket, server, &encode_identity_request(&expected_txid, spki)).await?;
+    send(
+        socket,
+        server,
+        &encode_identity_request(&expected_txid, spki),
+    )
+    .await?;
     let mut stage = Stage::Initial;
 
     loop {
@@ -128,7 +133,11 @@ pub async fn query_reflexive_address_signed(
                             send(socket, server, &req).await?;
                             stage = Stage::AfterFirstChallenge;
                         }
-                        _ => return Err(SignedQueryError::Refused { code: challenge.code }),
+                        _ => {
+                            return Err(SignedQueryError::Refused {
+                                code: challenge.code,
+                            })
+                        }
                     }
                 }
                 Stage::AfterFirstChallenge => match (challenge.code, &challenge.nonce) {
@@ -138,12 +147,18 @@ pub async fn query_reflexive_address_signed(
                         send(socket, server, &req).await?;
                         stage = Stage::AfterReSign;
                     }
-                    _ => return Err(SignedQueryError::Refused { code: challenge.code }),
+                    _ => {
+                        return Err(SignedQueryError::Refused {
+                            code: challenge.code,
+                        })
+                    }
                 },
                 Stage::AfterReSign => {
                     // No fourth datagram is ever sent (`SPEC.md` §14.9): a second stale-nonce
                     // reply, or anything else, ends the exchange as a refusal.
-                    return Err(SignedQueryError::Refused { code: challenge.code });
+                    return Err(SignedQueryError::Refused {
+                        code: challenge.code,
+                    });
                 }
             }
         } else {
@@ -152,7 +167,11 @@ pub async fn query_reflexive_address_signed(
     }
 }
 
-async fn send(socket: &UdpSocket, server: SocketAddr, datagram: &[u8]) -> Result<(), SignedQueryError> {
+async fn send(
+    socket: &UdpSocket,
+    server: SocketAddr,
+    datagram: &[u8],
+) -> Result<(), SignedQueryError> {
     socket
         .send_to(datagram, server)
         .await

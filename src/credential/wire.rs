@@ -180,7 +180,8 @@ pub(super) fn base64url_decode(input: &[u8]) -> Option<Vec<u8>> {
                 out.push(n as u8);
             }
             3 => {
-                let n = ((vals[0] as u32) << 18) | ((vals[1] as u32) << 12) | ((vals[2] as u32) << 6);
+                let n =
+                    ((vals[0] as u32) << 18) | ((vals[1] as u32) << 12) | ((vals[2] as u32) << 6);
                 out.push((n >> 16) as u8);
                 out.push((n >> 8) as u8);
             }
